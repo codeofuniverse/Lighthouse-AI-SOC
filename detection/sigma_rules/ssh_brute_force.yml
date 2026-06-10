@@ -1,0 +1,10 @@
+title: SSH Brute Force Attack
+id: ssh-brute-force-001
+description: Detects multiple failed SSH login attempts (>10 in 60 seconds) from same source IP
+severity: high
+rule_level: 7
+detection:
+  rule_level: ">5"
+  session_event_count: ">10"
+  session_duration_seconds: "<60"
+  threat_intel.is_known_attacker: true

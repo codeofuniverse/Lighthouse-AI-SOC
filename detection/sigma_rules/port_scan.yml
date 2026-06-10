@@ -1,0 +1,12 @@
+title: Port Scan Detection
+id: port-scan-001
+description: Detects port scanning activity (>20 unique destination ports from same source in 5 minutes)
+severity: high
+rule_level: 6
+detection:
+  session_event_count: ">20"
+  protocol: "tcp|udp"
+  condition:
+    - unique_dst_ports: ">20"
+    - session_duration_seconds: "<300"
+  description: Port scan - multiple connection attempts to different ports

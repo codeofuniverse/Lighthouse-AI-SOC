@@ -1,0 +1,264 @@
+services:
+
+  # ── Wazuh Manager ────────────────────────────────────────────────
+  # Standalone mode: filebeat indexer forwarding disabled (we use our
+  # own React dashboard, not Wazuh dashboard / OpenSearch).
+  wazuh-manager:
+    build:
+      context: infra/wazuh
+      dockerfile: Dockerfile.manager
+    image: lighthouse-wazuh-manager:latest
+    container_name: wazuh-manager
+    hostname: wazuh-manager
+    ports:
+      - "55000:55000"   # REST API
+      - "1514:1514"     # agent comms
+      - "1515:1515"     # agent enrollment (authd)
+    environment:
+      - INDEXER_URL=https://localhost:9200
+      - INDEXER_USERNAME=admin
+      - INDEXER_PASSWORD=admin
+      - FILEBEAT_SSL_VERIFICATION_MODE=none
+      - WAZUH_API_USER=wazuh
+      - WAZUH_API_PASSWORD=wazuh
+    volumes:
+      - wazuh_manager_data:/var/ossec/data
+      - ./infra/wazuh/ossec.conf:/wazuh-config-mount/etc/ossec.conf:ro
+    networks:
+      - lighthouse-net
+    healthcheck:
+      test: ["CMD-SHELL", "/var/ossec/bin/wazuh-control status | grep -q 'wazuh-analysisd is running'"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 45s
+
+  wazuh-agent:
+    image: wazuh/wazuh-agent:4.14.5
+    container_name: wazuh-agent
+    hostname: lh-victim-agent
+    depends_on:
+      wazuh-manager:
+        condition: service_healthy
+    environment:
+      - WAZUH_MANAGER_SERVER=wazuh-manager
+      - WAZUH_MANAGER_PORT=1514
+      - WAZUH_REGISTRATION_SERVER=wazuh-manager
+      - WAZUH_REGISTRATION_PORT=1515
+      - WAZUH_AGENT_NAME=lh-victim-agent
+      - WAZUH_AGENT_GROUP=default
+    volumes:
+      - wazuh_agent_data:/var/ossec/data
+    networks:
+      - lighthouse-net
+
+  # ── Kafka + Zookeeper ─────────────────────────────────────────────
+  zookeeper:
+    image: zookeeper:3.8
+    container_name: lh-zookeeper
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+    networks:
+      - lighthouse-net
+
+  kafka:
+    image: wurstmeister/kafka:2.13-2.8.1
+    container_name: lh-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_INTERNAL://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://lh-kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      - lighthouse-net
+
+  # ── Redis ─────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: lh-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - lighthouse-net
+
+  # ── Victim (target of attacks) ────────────────────────────────────
+  victim:
+    image: nginx:alpine
+    container_name: lh-victim
+    ports:
+      - "8080:80"
+      - "8443:443"
+    networks:
+      lighthouse-net:
+        ipv4_address: 172.28.0.10
+
+  # ── Suricata (packet capture → eve.json flow logs) ───────────────
+  suricata:
+    image: jasonish/suricata:latest
+    container_name: lh-suricata
+    depends_on:
+      - victim
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_NICE
+    network_mode: "container:lh-victim"
+    volumes:
+      - ./infra/suricata/suricata.yaml:/etc/suricata/suricata.yaml:ro
+      - ./infra/suricata/lighthouse.rules:/etc/suricata/rules/lighthouse.rules:ro
+      - suricata_logs:/var/log/suricata
+    command: >
+      suricata -c /etc/suricata/suricata.yaml
+               --set vars.address-groups.HOME_NET="172.28.0.0/24"
+               -i eth0
+               --init-errors-fatal
+
+  # ── Zeek (rich flow metadata → JSON conn.log / http.log) ─────────
+  # Second sensor: supplies the features Suricata flow records lack (proto/
+  # service/conn_state/missed_bytes + HTTP content) for richer CIC flow features
+  # and real Web-Attack context. Joined to Suricata by community-id.
+  zeek:
+    image: zeek/zeek:latest
+    container_name: lh-zeek
+    depends_on:
+      - victim
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    network_mode: "container:lh-victim"
+    volumes:
+      - ./infra/zeek/local.zeek:/usr/local/zeek/share/zeek/site/local.zeek:ro
+      - zeek_logs:/zeek/logs
+    # Zeek writes logs to its CWD, so cd into the shared volume first. Flags:
+    #   -C  ignore invalid TCP checksums — REQUIRED in Docker (NIC checksum
+    #       offloading otherwise makes Zeek discard nearly every packet, so no
+    #       flows / no community-id are logged).
+    #   non-rotating (interval=0) -> flat conn.log/http.log the backend tails.
+    # JSON output + community-id + TTL/seq come from local.zeek.
+    # `local` is the site-policy shorthand: Zeek auto-loads site/local.zeek AFTER
+    # the base protocol scripts, so our redefs (community-id, TTL/seq, JSON) attach
+    # correctly — unlike passing local.zeek positionally, which loads it too early
+    # in -i mode (custom fields then silently missing).
+    command: >
+      sh -c "cd /zeek/logs &&
+             exec zeek -C -i eth0 local
+                  Log::default_rotation_interval=0secs"
+
+  # ── ML Detector (reads flow logs, runs the CIC model) ────────────
+  detector:
+    build:
+      context: .
+      dockerfile: infra/detector/Dockerfile
+    container_name: lh-detector
+    depends_on:
+      - suricata
+      - kafka
+    env_file:
+      - .env
+    environment:
+      - CIC_MODEL_PATH=/app/data/models/cic2017_pipeline_smote.joblib
+      - KAFKA_BROKERS=lh-kafka:29092
+      - EVE_JSON_PATH=/var/log/suricata/eve.json
+    volumes:
+      - suricata_logs:/var/log/suricata:ro
+      - ./data/models:/app/data/models:ro
+      - detector_logs:/app/logs
+    networks:
+      - lighthouse-net
+
+  # ── FastAPI Backend (alert store + WebSocket + REST API) ──────────
+  backend:
+    build:
+      context: .
+      dockerfile: infra/backend/Dockerfile
+    container_name: lh-backend
+    depends_on:
+      - detector
+      - redis
+      - zeek
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - EVE_JSON_PATH=/var/log/suricata/eve.json
+      - CIC_MODEL_PATH=/app/data/models/cic2017_pipeline_smote.joblib
+      # UNSW models removed (2026) — CIC is the sole ML detector. See
+      # docs/INFORMATION.md "Why UNSW was dropped".
+      - REDIS_HOST=lh-redis
+      - KAFKA_BROKERS=lh-kafka:29092
+      - WAZUH_HOST=wazuh-manager
+      - SOAR_DRY_RUN=1
+      - LIGHTHOUSE_DEV=0
+      # Topology: Zeek-primary (rich ML features) + Suricata signatures-only,
+      # correlated by community-id. If Zeek's conn.log is absent the backend
+      # automatically falls back to Suricata-ML. Set LIGHTHOUSE_ZEEK=0 to force
+      # the Suricata-only path.
+      - LIGHTHOUSE_ZEEK=1
+      - ZEEK_CONN_PATH=/zeek/logs/conn.log
+      - ZEEK_HTTP_PATH=/zeek/logs/http.log
+    volumes:
+      - suricata_logs:/var/log/suricata:ro
+      - zeek_logs:/zeek/logs:ro
+      - ./data/models:/app/data/models:ro
+    networks:
+      - lighthouse-net
+
+  # ── Attacker A: hping3 (SYN floods, port scans) ──────────────────
+  attacker-hping:
+    image: utkudarilmaz/hping3:latest
+    container_name: lh-attacker-hping
+    depends_on:
+      - victim
+    networks:
+      lighthouse-net:
+        ipv4_address: 172.28.0.20
+    volumes:
+      - ./infra/attacker/hping_attacks.sh:/home/attacks.sh:ro
+    entrypoint: /bin/sh
+    command: ["-c", "sleep infinity"]
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+
+  # ── Attacker B: Metasploit (exploits, brute force) ────────────────
+  attacker-msf:
+    image: metasploitframework/metasploit-framework:latest
+    container_name: lh-attacker-msf
+    depends_on:
+      - victim
+    networks:
+      lighthouse-net:
+        ipv4_address: 172.28.0.21
+    entrypoint: /bin/bash
+    command: ["-c", "sleep infinity"]
+    volumes:
+      - ./infra/attacker/msf_attacks.rc:/home/msf/attacks.rc:ro
+    environment:
+      - MSF_DISABLE_DATABASE=true
+
+networks:
+  lighthouse-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+
+volumes:
+  wazuh_manager_data:
+  wazuh_agent_data:
+  redis_data:
+  suricata_logs:
+  zeek_logs:
+  detector_logs:
+  wazuh_manager_etc:
+  wazuh_manager_logs:

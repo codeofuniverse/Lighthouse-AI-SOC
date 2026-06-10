@@ -1,0 +1,12 @@
+title: Privilege Escalation Attempt
+id: priv-esc-001
+description: Detects sudo/elevation failures indicating privilege escalation attempts
+severity: medium
+rule_level: 5
+detection:
+  rule_group: "privilege_escalation|sudo"
+  condition:
+    - rule_level: ">=5"
+    - session_event_count: ">5"
+  mitre_tactic: "privilege-escalation"
+  description: Privilege escalation attempt - multiple sudo/elevation failures

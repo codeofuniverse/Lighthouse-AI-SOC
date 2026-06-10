@@ -1,0 +1,108 @@
+{
+  "agents": {
+    "001": {
+      "asset_name": "web-server-01",
+      "asset_criticality": "high",
+      "asset_owner": "infra",
+      "asset_type": "server"
+    },
+    "002": {
+      "asset_name": "db-server-01",
+      "asset_criticality": "critical",
+      "asset_owner": "data",
+      "asset_type": "server"
+    },
+    "003": {
+      "asset_name": "auth-server-01",
+      "asset_criticality": "critical",
+      "asset_owner": "security",
+      "asset_type": "server"
+    },
+    "004": {
+      "asset_name": "workstation-dev-01",
+      "asset_criticality": "medium",
+      "asset_owner": "engineering",
+      "asset_type": "workstation"
+    },
+    "005": {
+      "asset_name": "workstation-hr-01",
+      "asset_criticality": "low",
+      "asset_owner": "hr",
+      "asset_type": "workstation"
+    },
+    "006": {
+      "asset_name": "fileserver-01",
+      "asset_criticality": "high",
+      "asset_owner": "infra",
+      "asset_type": "server"
+    },
+    "007": {
+      "asset_name": "vpn-gateway-01",
+      "asset_criticality": "critical",
+      "asset_owner": "security",
+      "asset_type": "network"
+    },
+    "008": {
+      "asset_name": "mail-server-01",
+      "asset_criticality": "high",
+      "asset_owner": "infra",
+      "asset_type": "server"
+    }
+  },
+  "ips": {
+    "10.0.0.5": {
+      "asset_name": "web-server-01",
+      "asset_criticality": "high",
+      "asset_owner": "infra",
+      "asset_type": "server"
+    },
+    "10.0.0.10": {
+      "asset_name": "db-server-01",
+      "asset_criticality": "critical",
+      "asset_owner": "data",
+      "asset_type": "server"
+    },
+    "10.0.0.15": {
+      "asset_name": "auth-server-01",
+      "asset_criticality": "critical",
+      "asset_owner": "security",
+      "asset_type": "server"
+    },
+    "10.0.0.20": {
+      "asset_name": "workstation-dev-01",
+      "asset_criticality": "medium",
+      "asset_owner": "engineering",
+      "asset_type": "workstation"
+    },
+    "10.0.0.25": {
+      "asset_name": "workstation-hr-01",
+      "asset_criticality": "low",
+      "asset_owner": "hr",
+      "asset_type": "workstation"
+    },
+    "10.0.0.30": {
+      "asset_name": "fileserver-01",
+      "asset_criticality": "high",
+      "asset_owner": "infra",
+      "asset_type": "server"
+    },
+    "10.0.0.1": {
+      "asset_name": "vpn-gateway-01",
+      "asset_criticality": "critical",
+      "asset_owner": "security",
+      "asset_type": "network"
+    },
+    "10.0.0.50": {
+      "asset_name": "mail-server-01",
+      "asset_criticality": "high",
+      "asset_owner": "infra",
+      "asset_type": "server"
+    },
+    "172.28.0.10": {
+      "asset_name": "docker-target-01",
+      "asset_criticality": "medium",
+      "asset_owner": "infra",
+      "asset_type": "server"
+    }
+  }
+}

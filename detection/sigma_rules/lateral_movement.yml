@@ -1,0 +1,13 @@
+title: Lateral Movement Detection
+id: lateral-movement-001
+description: Detects lateral movement attempts (same source IP accessing >5 unique agents/destinations)
+severity: medium
+rule_level: 6
+detection:
+  condition:
+    - unique_dst_ips: ">5"
+    - session_duration_seconds: "<600"
+    - threat_intel.is_known_attacker: true
+  mitre_technique: "T1570"
+  mitre_tactic: "lateral-movement"
+  description: Lateral movement - rapid access to multiple systems from same source

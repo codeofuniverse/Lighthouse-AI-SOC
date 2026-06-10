@@ -1,0 +1,12 @@
+title: Web Shell Upload
+id: web-shell-001
+description: Detects suspicious web shell upload attempts (HTTP POST to .php, .asp, .jsp files)
+severity: high
+rule_level: 7
+detection:
+  rule_group: "web|http"
+  protocol: "http|https"
+  condition:
+    - rule_description: ".*\\.(php|asp|jsp|aspx|cfm).*"
+  mitre_technique: "T1190"
+  description: Web shell upload detected - suspicious file upload to web server

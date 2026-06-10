@@ -1,0 +1,13 @@
+FROM wazuh/wazuh-manager:4.14.5
+
+# Disable filebeat indexer forwarding — Lighthouse uses its own React dashboard,
+# not the Wazuh indexer / OpenSearch stack. We replace the filebeat init script
+# with a no-op so the container starts cleanly without wazuh.indexer:9200.
+RUN printf '#!/usr/bin/with-contenv bash\n# filebeat disabled in Lighthouse\nexit 0\n' \
+    > /etc/cont-init.d/1-config-filebeat && \
+    chmod +x /etc/cont-init.d/1-config-filebeat
+
+# Minimal filebeat config — outputs nothing, no ES connection attempted
+RUN printf 'filebeat.inputs: []\noutput.console:\n  enabled: false\nlogging.level: error\n' \
+    > /etc/filebeat/filebeat.yml && \
+    chmod 600 /etc/filebeat/filebeat.yml

@@ -1,0 +1,122 @@
+services:
+
+  # ── Infrastructure ──────────────────────────────────────────────
+  zookeeper:
+    image: zookeeper:3.8
+    container_name: lh-zookeeper
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+    networks:
+      - lighthouse-net
+
+  kafka:
+    image: wurstmeister/kafka:2.13-2.8.1
+    container_name: lh-kafka
+    depends_on: [zookeeper]
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://lh-kafka:9092
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      - lighthouse-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: lh-redis
+    networks:
+      - lighthouse-net
+
+  # ── Victim (target of attacks) ───────────────────────────────────
+  victim:
+    image: nginx:alpine
+    container_name: lh-victim
+    networks:
+      lighthouse-net:
+        ipv4_address: 172.28.0.10
+    # Expose a simple HTTP + HTTPS surface for attacks to hit
+    ports:
+      - "8080:80"
+      - "8443:443"
+
+  # ── Suricata (packet capture + flow feature extraction) ──────────
+  suricata:
+    image: jasonish/suricata:latest
+    container_name: lh-suricata
+    depends_on: [victim]
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_NICE
+    network_mode: "container:lh-victim"   # share victim's network namespace to sniff eth0
+    volumes:
+      - ./suricata/suricata.yaml:/etc/suricata/suricata.yaml:ro
+      - ./suricata/lighthouse.rules:/etc/suricata/rules/lighthouse.rules:ro
+      - suricata_logs:/var/log/suricata
+    command: >
+      suricata -c /etc/suricata/suricata.yaml
+               --set vars.address-groups.HOME_NET="172.28.0.0/24"
+               -i eth0
+               --init-errors-fatal
+
+  # ── Suricata → Model bridge (feature extraction + detection) ─────
+  detector:
+    build:
+      context: ..
+      dockerfile: infra/detector/Dockerfile
+    container_name: lh-detector
+    depends_on: [suricata, kafka]
+    environment:
+      - CIC_MODEL_PATH=/app/data/models/cic2017_pipeline_smote.joblib
+      - UNSW_MODEL_PATH=/app/data/models/unsw_nb15_pipeline.joblib
+      - KAFKA_BROKERS=lh-kafka:9092
+      - LOG_PATH=/app/logs/detections.json
+    volumes:
+      - suricata_logs:/var/log/suricata:ro   # reads eve.json written by Suricata
+      - ../data/models:/app/data/models:ro
+      - detector_logs:/app/logs
+    networks:
+      - lighthouse-net
+
+  # ── Attacker A: hping3 (floods, scans) ───────────────────────────
+  attacker-hping:
+    image: utkudarilmaz/hping3:latest
+    container_name: lh-attacker-hping
+    depends_on: [victim]
+    networks:
+      lighthouse-net:
+        ipv4_address: 172.28.0.20
+    volumes:
+      - ./attacker/hping_attacks.sh:/home/attacks.sh:ro
+    entrypoint: /bin/sh
+    command: ["-c", "sleep infinity"]   # kept alive; trigger attacks with docker exec
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+
+  # ── Attacker B: Metasploit (exploits, brute force, web attacks) ──
+  attacker-msf:
+    image: metasploitframework/metasploit-framework:latest
+    container_name: lh-attacker-msf
+    depends_on: [victim]
+    networks:
+      lighthouse-net:
+        ipv4_address: 172.28.0.21
+    entrypoint: /bin/bash
+    command: ["-c", "sleep infinity"]   # trigger via docker exec or load RC file
+    volumes:
+      - ./attacker/msf_attacks.rc:/home/msf/attacks.rc:ro
+    environment:
+      - MSF_DISABLE_DATABASE=true
+
+networks:
+  lighthouse-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+
+volumes:
+  suricata_logs:
+  detector_logs:

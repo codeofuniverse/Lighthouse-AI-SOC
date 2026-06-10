@@ -1,0 +1,76 @@
+# Lighthouse Suricata rules
+# These fire alerts that appear in eve.json alongside flow records.
+# The detector bridge uses flow records for ML features; these rules
+# provide a rule-engine label that can be compared against ML output.
+
+# ── DDoS / Flood ─────────────────────────────────────────────────
+alert tcp any any -> $HOME_NET any (msg:"LIGHTHOUSE DDoS SYN Flood"; \
+    flags:S; threshold: type both, track by_src, count 200, seconds 5; \
+    classtype:denial-of-service; sid:9000001; rev:1;)
+
+alert udp any any -> $HOME_NET any (msg:"LIGHTHOUSE DDoS UDP Flood"; \
+    threshold: type both, track by_src, count 500, seconds 5; \
+    classtype:denial-of-service; sid:9000002; rev:1;)
+
+# ── DoS (slow/volumetric HTTP) ───────────────────────────────────
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"LIGHTHOUSE DoS HTTP Flood"; \
+    threshold: type both, track by_src, count 100, seconds 5; \
+    classtype:denial-of-service; sid:9000010; rev:1;)
+
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"LIGHTHOUSE DoS Slowloris"; \
+    content:"GET"; http_method; \
+    threshold: type both, track by_src, count 50, seconds 10; \
+    classtype:denial-of-service; sid:9000011; rev:1;)
+
+# ── Port Scan ────────────────────────────────────────────────────
+alert tcp any any -> $HOME_NET any (msg:"LIGHTHOUSE PortScan TCP SYN"; \
+    flags:S; threshold: type both, track by_src, count 30, seconds 5; \
+    classtype:attempted-recon; sid:9000020; rev:1;)
+
+alert tcp any any -> $HOME_NET any (msg:"LIGHTHOUSE PortScan NULL Flags"; \
+    flags:0; classtype:attempted-recon; sid:9000021; rev:1;)
+
+# ── Brute Force (SSH / FTP / HTTP Auth) ─────────────────────────
+alert tcp any any -> $HOME_NET $SSH_PORTS (msg:"LIGHTHOUSE BruteForce SSH"; \
+    threshold: type both, track by_src, count 10, seconds 30; \
+    classtype:attempted-admin; sid:9000030; rev:1;)
+
+alert ftp any any -> $HOME_NET 21 (msg:"LIGHTHOUSE BruteForce FTP"; \
+    content:"PASS"; nocase; \
+    threshold: type both, track by_src, count 5, seconds 10; \
+    classtype:attempted-admin; sid:9000031; rev:1;)
+
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"LIGHTHOUSE BruteForce HTTP Auth"; \
+    content:"Authorization:"; http_header; \
+    threshold: type both, track by_src, count 10, seconds 10; \
+    classtype:attempted-admin; sid:9000032; rev:1;)
+
+# ── Web Attacks ──────────────────────────────────────────────────
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"LIGHTHOUSE WebAttack SQLi"; \
+    content:"SELECT"; http_uri; nocase; \
+    pcre:"/(\%27|\')|(\-\-)|(\%23|\#)/i"; \
+    classtype:web-application-attack; sid:9000040; rev:1;)
+
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"LIGHTHOUSE WebAttack XSS"; \
+    content:"<script"; http_uri; nocase; \
+    classtype:web-application-attack; sid:9000041; rev:1;)
+
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"LIGHTHOUSE WebAttack XSS Body"; \
+    content:"<script"; http_client_body; nocase; \
+    classtype:web-application-attack; sid:9000042; rev:1;)
+
+# ── Heartbleed (TLS heartbeat overflow) ─────────────────────────
+alert tls any any -> $HOME_NET $HTTPS_PORTS (msg:"LIGHTHOUSE Heartbleed TLS Heartbeat"; \
+    content:"|18 03|"; depth:3; \
+    byte_test:2,>,200,3,big; \
+    classtype:attempted-admin; sid:9000050; rev:1;)
+
+# ── Bot / C2 beaconing ───────────────────────────────────────────
+alert tcp any any -> !$HOME_NET any (msg:"LIGHTHOUSE Bot C2 Beacon"; \
+    flags:PA; threshold: type both, track by_src, count 20, seconds 60; \
+    classtype:trojan-activity; sid:9000060; rev:1;)
+
+# ── Infiltration / Lateral Movement ─────────────────────────────
+alert tcp $HOME_NET any -> $HOME_NET any (msg:"LIGHTHOUSE Infiltration Internal Scan"; \
+    flags:S; threshold: type both, track by_src, count 15, seconds 10; \
+    classtype:attempted-recon; sid:9000070; rev:1;)
