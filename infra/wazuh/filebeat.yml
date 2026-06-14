@@ -1,6 +1,0 @@
-# Filebeat disabled — Wazuh indexer not used in Lighthouse (custom React dashboard)
-# This file suppresses filebeat's attempt to connect to wazuh.indexer:9200
-filebeat.inputs: []
-output.console:
-  enabled: false
-logging.level: error
